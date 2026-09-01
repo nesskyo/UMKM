@@ -1,16 +1,41 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { useState } from "react"
-import { Bell, Search, Menu, X, LayoutDashboard, Package, Receipt, BarChart3, TrendingUp, Lightbulb, Archive, Settings, UserCircle2 } from "lucide-react"
+import { usePathname, useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
+import { Bell, Search, Menu, X, LayoutDashboard, Package, Receipt, BarChart3, TrendingUp, Lightbulb, Archive, Settings, UserCircle2, LogOut } from "@/components/ui/icons"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { notifications } from "@/data/mockData"
+import { supabase } from "@/lib/supabaseClient"
 
-export function TopNavbar() {
+interface TopNavbarProps {
+  userName: string
+  businessName: string
+  avatarUrl: string | null
+}
+
+export function TopNavbar({ userName, businessName, avatarUrl }: TopNavbarProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      const { count } = await supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("is_read", false);
+      setUnreadCount(count ?? 0);
+    };
+    fetchUnreadCount();
+  }, [pathname]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  };
 
   const navItems = [
     { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -71,6 +96,14 @@ export function TopNavbar() {
                   </Link>
                 )
               })}
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium text-critical hover:bg-gray-100"
+              >
+                <LogOut className="h-5 w-5" />
+                Keluar
+              </button>
             </div>
           </nav>
         </div>
@@ -91,21 +124,21 @@ export function TopNavbar() {
         <Link href="/notifications" className="relative" aria-label="Buka notifikasi">
           <Button variant="ghost" size="icon" className="relative rounded-full">
             <Bell className="h-5 w-5 text-muted" />
-            {notifications.some((item) => !item.isRead) && (
+            {unreadCount > 0 && (
               <span className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-critical text-[8px] text-white">
-                {notifications.filter((item) => !item.isRead).length > 9 ? "9+" : notifications.filter((item) => !item.isRead).length}
+                {unreadCount > 9 ? "9+" : unreadCount}
               </span>
             )}
           </Button>
         </Link>
         <div className="hidden sm:flex items-center gap-3 border-l border-gray-200 pl-4">
           <div className="text-right">
-            <p className="text-sm font-medium">Andi Pratama</p>
-            <p className="text-xs text-muted">Kopi Senja</p>
+            <p className="text-sm font-medium">{userName}</p>
+            <p className="text-xs text-muted">{businessName}</p>
           </div>
           <Avatar>
-            <AvatarImage src="https://api.dicebear.com/7.x/notionists/svg?seed=Andi" alt="Andi" />
-            <AvatarFallback>AP</AvatarFallback>
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={userName} />}
+            <AvatarFallback>{userName.slice(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
         </div>
       </div>

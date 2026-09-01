@@ -17,7 +17,7 @@ import {
   Sliders,
   AlertCircle,
   UserCircle2,
-} from "lucide-react"
+} from "@/components/ui/icons"
 
 export default function SettingsPage() {
   const {

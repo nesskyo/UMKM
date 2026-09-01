@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Sparkles, ArrowRight } from "lucide-react"
+import { Sparkles, ArrowRight } from "@/components/ui/icons"
 
 interface AIInsightCardProps {
   summary: string;

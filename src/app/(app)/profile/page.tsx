@@ -1,39 +1,114 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { profileData, businessData } from "@/data/mockData"
-import { Mail, MapPin, Phone, Building2, Pencil, CheckCircle2, Save, X } from "lucide-react"
+import { supabase } from "@/lib/supabaseClient"
+import type { Business, Profile } from "@/lib/types"
+import { Mail, MapPin, Phone, Building2, Pencil, CheckCircle2, Save, X } from "@/components/ui/icons"
 
 export default function ProfilePage() {
+  const router = useRouter()
   const [isEditing, setIsEditing] = useState(false)
-  const [profile, setProfile] = useState(profileData)
-  const [business, setBusiness] = useState(businessData)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [business, setBusiness] = useState<Business | null>(null)
+  const [email, setEmail] = useState("")
   const [savedMessage, setSavedMessage] = useState("")
 
-  const handleProfileChange = (field: keyof typeof profileData, value: string) => {
-    setProfile((prev) => ({ ...prev, [field]: value }))
+  useEffect(() => {
+    const load = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        router.push("/login")
+        return
+      }
+
+      setEmail(user.email ?? "")
+
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single()
+      setProfile((profileData as Profile) ?? null)
+
+      const { data: businessData } = await supabase
+        .from("businesses")
+        .select("*")
+        .eq("created_by", user.id)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .single()
+      setBusiness((businessData as Business) ?? null)
+    }
+    load()
+  }, [router])
+
+  const handleProfileChange = (field: keyof Profile, value: string) => {
+    setProfile((prev) => (prev ? { ...prev, [field]: value } : prev))
   }
 
-  const handleBusinessChange = (field: keyof typeof businessData, value: string) => {
-    setBusiness((prev) => ({ ...prev, [field]: value }))
+  const handleBusinessChange = (field: keyof Business, value: string) => {
+    setBusiness((prev) => (prev ? { ...prev, [field]: value } : prev))
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (profile) {
+      await supabase
+        .from("profiles")
+        .update({
+          full_name: profile.full_name,
+          phone: profile.phone,
+          address: profile.address,
+        })
+        .eq("id", profile.id)
+    }
+
+    if (business) {
+      await supabase
+        .from("businesses")
+        .update({
+          name: business.name,
+          type: business.type,
+          address: business.address,
+          phone: business.phone,
+          email: business.email,
+        })
+        .eq("id", business.id)
+    }
+
     setIsEditing(false)
     setSavedMessage("Perubahan profil berhasil disimpan.")
     setTimeout(() => setSavedMessage(""), 2500)
   }
 
-  const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (!file) return
+    if (!file || !profile) return
 
     const previewUrl = URL.createObjectURL(file)
-    setProfile((prev) => ({ ...prev, profilePhoto: previewUrl }))
+    setProfile((prev) => (prev ? { ...prev, avatar_url: previewUrl } : prev))
+
+    try {
+      const filePath = `avatars/${profile.id}-${Date.now()}-${file.name}`
+      await supabase.storage.from("avatars").upload(filePath, file)
+      const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(filePath)
+      await supabase.from("profiles").update({ avatar_url: urlData.publicUrl }).eq("id", profile.id)
+      setProfile((prev) => (prev ? { ...prev, avatar_url: urlData.publicUrl } : prev))
+    } catch (err) {
+      console.error("Upload avatar gagal. Catatan: buat bucket 'avatars' di Supabase Storage.", err)
+    }
+  }
+
+  if (!profile || !business) {
+    return (
+      <div className="space-y-6 animate-in fade-in duration-500">
+        <p className="text-muted text-sm">Memuat profil...</p>
+      </div>
+    )
   }
 
   return (
@@ -77,8 +152,8 @@ export default function ProfilePage() {
             <div className="flex items-center gap-4">
               <div className="relative">
                 <Avatar className="h-20 w-20 border-2 border-primary/10">
-                  <AvatarImage src={profile.profilePhoto} alt={profile.fullName} />
-                  <AvatarFallback>{profile.fullName.slice(0, 2).toUpperCase()}</AvatarFallback>
+                  {profile.avatar_url && <AvatarImage src={profile.avatar_url} alt={profile.full_name} />}
+                  <AvatarFallback>{profile.full_name.slice(0, 2).toUpperCase()}</AvatarFallback>
                 </Avatar>
 
                 {isEditing && (
@@ -91,10 +166,10 @@ export default function ProfilePage() {
 
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-xl font-semibold">{profile.fullName}</h2>
+                  <h2 className="text-xl font-semibold">{profile.full_name}</h2>
                   <CheckCircle2 className="h-4 w-4 text-primary" />
                 </div>
-                <p className="text-sm text-muted">{business.businessName}</p>
+                <p className="text-sm text-muted">{business.name}</p>
                 <p className="text-xs text-muted mt-1">Status akun aktif</p>
               </div>
             </div>
@@ -118,8 +193,8 @@ export default function ProfilePage() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Nama Lengkap</label>
                   <Input
-                    value={profile.fullName}
-                    onChange={(event) => handleProfileChange("fullName", event.target.value)}
+                    value={profile.full_name}
+                    onChange={(event) => handleProfileChange("full_name", event.target.value)}
                   />
                 </div>
 
@@ -127,11 +202,7 @@ export default function ProfilePage() {
                   <label className="text-sm font-medium text-muted">Email</label>
                   <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-surface px-3">
                     <Mail className="h-4 w-4 text-muted" />
-                    <Input
-                      value={profile.email}
-                      onChange={(event) => handleProfileChange("email", event.target.value)}
-                      className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
-                    />
+                    <Input disabled value={email} className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 opacity-60" />
                   </div>
                 </div>
 
@@ -140,9 +211,10 @@ export default function ProfilePage() {
                   <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-surface px-3">
                     <Phone className="h-4 w-4 text-muted" />
                     <Input
-                      value={profile.phone}
+                      value={profile.phone ?? ""}
                       onChange={(event) => handleProfileChange("phone", event.target.value)}
                       className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                      placeholder="+62..."
                     />
                   </div>
                 </div>
@@ -152,9 +224,10 @@ export default function ProfilePage() {
                   <div className="flex items-start gap-2 rounded-md border border-gray-200 bg-surface px-3 py-2">
                     <MapPin className="mt-2 h-4 w-4 text-muted" />
                     <Input
-                      value={profile.address}
+                      value={profile.address ?? ""}
                       onChange={(event) => handleProfileChange("address", event.target.value)}
                       className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                      placeholder="Jl. ..."
                     />
                   </div>
                 </div>
@@ -164,31 +237,29 @@ export default function ProfilePage() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Nama Lengkap</label>
                   <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium">
-                    {profile.fullName}
+                    {profile.full_name}
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Email</label>
-                  <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-                    <Mail className="h-4 w-4 text-muted" />
-                    <span>{profile.email}</span>
-                  </div>
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                    {email}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Nomor Telepon</label>
-                  <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-                    <Phone className="h-4 w-4 text-muted" />
-                    <span>{profile.phone}</span>
-                  </div>
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                    {profile.phone || "-"}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Alamat</label>
                   <div className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
                     <MapPin className="mt-0.5 h-4 w-4 text-muted" />
-                    <span>{profile.address}</span>
+                    <span>{profile.address || "-"}</span>
                   </div>
                 </div>
               </>
@@ -208,8 +279,8 @@ export default function ProfilePage() {
                   <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-surface px-3">
                     <Building2 className="h-4 w-4 text-muted" />
                     <Input
-                      value={business.businessName}
-                      onChange={(event) => handleBusinessChange("businessName", event.target.value)}
+                      value={business.name}
+                      onChange={(event) => handleBusinessChange("name", event.target.value)}
                       className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
                     />
                   </div>
@@ -218,8 +289,9 @@ export default function ProfilePage() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Jenis Usaha</label>
                   <Input
-                    value={business.businessType}
-                    onChange={(event) => handleBusinessChange("businessType", event.target.value)}
+                    value={business.type ?? ""}
+                    onChange={(event) => handleBusinessChange("type", event.target.value)}
+                    placeholder="Coffee Shop"
                   />
                 </div>
 
@@ -228,19 +300,11 @@ export default function ProfilePage() {
                   <div className="flex items-start gap-2 rounded-md border border-gray-200 bg-surface px-3 py-2">
                     <MapPin className="mt-2 h-4 w-4 text-muted" />
                     <Input
-                      value={business.businessAddress}
-                      onChange={(event) => handleBusinessChange("businessAddress", event.target.value)}
+                      value={business.address ?? ""}
+                      onChange={(event) => handleBusinessChange("address", event.target.value)}
                       className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
                     />
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted">Pemilik</label>
-                  <Input
-                    value={business.ownerName}
-                    onChange={(event) => handleBusinessChange("ownerName", event.target.value)}
-                  />
                 </div>
 
                 <div className="space-y-2">
@@ -248,8 +312,8 @@ export default function ProfilePage() {
                   <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-surface px-3">
                     <Phone className="h-4 w-4 text-muted" />
                     <Input
-                      value={business.businessPhone}
-                      onChange={(event) => handleBusinessChange("businessPhone", event.target.value)}
+                      value={business.phone ?? ""}
+                      onChange={(event) => handleBusinessChange("phone", event.target.value)}
                       className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
                     />
                   </div>
@@ -260,8 +324,8 @@ export default function ProfilePage() {
                   <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-surface px-3">
                     <Mail className="h-4 w-4 text-muted" />
                     <Input
-                      value={business.businessEmail}
-                      onChange={(event) => handleBusinessChange("businessEmail", event.target.value)}
+                      value={business.email ?? ""}
+                      onChange={(event) => handleBusinessChange("email", event.target.value)}
                       className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
                     />
                   </div>
@@ -273,14 +337,14 @@ export default function ProfilePage() {
                   <label className="text-sm font-medium text-muted">Nama Bisnis</label>
                   <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
                     <Building2 className="h-4 w-4 text-muted" />
-                    <span>{business.businessName}</span>
+                    <span>{business.name}</span>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Jenis Usaha</label>
                   <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium">
-                    {business.businessType}
+                    {business.type || "-"}
                   </p>
                 </div>
 
@@ -288,22 +352,15 @@ export default function ProfilePage() {
                   <label className="text-sm font-medium text-muted">Alamat Bisnis</label>
                   <div className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
                     <MapPin className="mt-0.5 h-4 w-4 text-muted" />
-                    <span>{business.businessAddress}</span>
+                    <span>{business.address || "-"}</span>
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted">Pemilik</label>
-                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium">
-                    {business.ownerName}
-                  </p>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-muted">Kontak Bisnis</label>
                   <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
                     <Phone className="h-4 w-4 text-muted" />
-                    <span>{business.businessPhone}</span>
+                    <span>{business.phone || "-"}</span>
                   </div>
                 </div>
 
@@ -311,7 +368,7 @@ export default function ProfilePage() {
                   <label className="text-sm font-medium text-muted">Email Bisnis</label>
                   <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
                     <Mail className="h-4 w-4 text-muted" />
-                    <span>{business.businessEmail}</span>
+                    <span>{business.email || "-"}</span>
                   </div>
                 </div>
               </>

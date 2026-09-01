@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ArrowRight, Zap, Target, BarChart2 } from "lucide-react"
+import { ArrowRight, Zap, Target, BarChart2 } from "@/components/ui/icons"
 
 interface RecommendationCardProps {
   priority: "HIGH" | "MEDIUM" | "LOW";

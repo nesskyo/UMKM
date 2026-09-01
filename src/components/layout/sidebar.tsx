@@ -15,7 +15,7 @@ import {
   Bell,
   UserCircle2,
   type LucideIcon,
-} from "lucide-react"
+} from "@/components/ui/icons"
 
 type NavItem = {
   title: string

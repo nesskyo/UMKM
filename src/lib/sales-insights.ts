@@ -1,4 +1,13 @@
-import type { Transaction } from "@/data/mockData";
+export interface Transaction {
+  id: string;
+  product: string;
+  time: string;
+  date: string;
+  productCount: number;
+  total: number;
+  payment: string;
+  status: string;
+}
 
 const TIME_BUCKETS = [
   { label: "pagi", start: 5, end: 12 },

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Package, Receipt, Archive, UserCircle2, Bell } from "lucide-react"
+import { LayoutDashboard, Package, Receipt, Archive, UserCircle2, Bell } from "@/components/ui/icons"
 import { cn } from "@/lib/utils"
 
 const navItems = [

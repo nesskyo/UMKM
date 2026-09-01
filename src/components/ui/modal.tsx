@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import { X } from "lucide-react"
+import { X } from "@/components/ui/icons"
 import { Button } from "./button"
 
 interface ModalProps {

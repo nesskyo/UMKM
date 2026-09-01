@@ -1,66 +1,141 @@
 "use client"
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
-import { productCategories, products as initialProducts } from "@/data/mockData";
+import { supabase } from "@/lib/supabaseClient";
+import { getCurrentBusinessId } from "@/lib/business";
+import type { Product, ProductCategory, ProductWithCategory } from "@/lib/types";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Filter } from "lucide-react";
+import { Plus, Search, Filter } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 
+function getProductStatus(stock: number, minStock: number) {
+  if (stock <= 0) return "Out of Stock" as const;
+  if (stock <= minStock) return "Low Stock" as const;
+  return "Available" as const;
+}
+
 export default function ProductsPage() {
-  const [products, setProducts] = useState(initialProducts);
+  const [products, setProducts] = useState<ProductWithCategory[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
   const [feedback, setFeedback] = useState("");
-  const [savedProduct, setSavedProduct] = useState<any>(null);
-  
-  // New product form state
+  const [savedProduct, setSavedProduct] = useState<ProductWithCategory | null>(null);
+
   const [newProduct, setNewProduct] = useState({
     name: "",
-    category: "Minuman",
+    categoryId: "",
     price: "",
     stock: "",
     minStock: "",
   });
 
-  const handleSaveProduct = () => {
-    const p = {
-      id: `P${Math.floor(Math.random() * 1000)}`,
+  useEffect(() => {
+    const loadData = async () => {
+      const { data: catData } = await supabase
+        .from("product_categories")
+        .select("*")
+        .order("name");
+      setCategories(catData ?? []);
+
+      const businessId = await getCurrentBusinessId();
+      if (!businessId) return;
+
+      const { data } = await supabase
+        .from("products")
+        .select("*, product_categories(*)")
+        .eq("business_id", businessId);
+      const rows = (data ?? []) as (Product & { product_categories: ProductCategory })[];
+      setProducts(rows.map((p) => ({ ...p, status: getProductStatus(p.stock, p.min_stock) })));
+      setLoading(false);
+    };
+    loadData();
+  }, []);
+
+  const handleSaveProduct = async () => {
+    const businessId = await getCurrentBusinessId();
+    if (!businessId) {
+      setFeedback("Bisnis tidak ditemukan. Perbarui profil bisnis Anda terlebih dahulu.");
+      return;
+    }
+
+    const validated = {
       name: newProduct.name || "Produk Baru",
-      category: newProduct.category,
+      categoryId: newProduct.categoryId || categories[0]?.id,
       price: parseInt(newProduct.price) || 0,
       stock: parseInt(newProduct.stock) || 0,
       minStock: parseInt(newProduct.minStock) || 0,
-      status: parseInt(newProduct.stock) <= parseInt(newProduct.minStock) ? "Low Stock" : "Available"
     };
-    setProducts([p, ...products]);
-    setSavedProduct(p);
+
+    const { data, error } = await supabase
+      .from("products")
+      .insert({
+        business_id: businessId,
+        category_id: validated.categoryId,
+        name: validated.name,
+        price: validated.price,
+        stock: validated.stock,
+        min_stock: validated.minStock,
+      })
+      .select("*, product_categories(*)")
+      .single();
+
+    if (error) {
+      setFeedback(`Gagal menyimpan: ${error.message}`);
+      return;
+    }
+
+    const category = categories.find((c) => c.id === validated.categoryId);
+    const saved: ProductWithCategory = {
+      ...(data as Product),
+      product_categories: category ?? { id: "", name: "", created_at: "" },
+      status: getProductStatus(data.stock, data.min_stock),
+    };
+
+    setProducts((prev) => [saved, ...prev]);
+    setSavedProduct(saved);
     setIsAddModalOpen(false);
     setIsQRModalOpen(true);
     setCategorySearch("");
-    // Reset form
-    setNewProduct({ name: "", category: "Minuman", price: "", stock: "", minStock: "" });
+    setNewProduct({ name: "", categoryId: "", price: "", stock: "", minStock: "" });
     setFeedback("Produk berhasil ditambahkan.");
   };
 
+  const handleEditProduct = async (product: ProductWithCategory) => {
+    const updatedStatus = getProductStatus(product.stock, product.min_stock);
+    const { error } = await supabase
+      .from("products")
+      .update({ stock: product.stock, min_stock: product.min_stock })
+      .eq("id", product.id);
+
+    if (error) {
+      setFeedback(`Gagal update: ${error.message}`);
+      return;
+    }
+
+    setProducts((prev) =>
+      prev.map((p) => (p.id === product.id ? { ...p, status: updatedStatus } : p))
+    );
+    setFeedback("Produk diperbarui.");
+  };
+
   const columns = [
-    { key: "id", header: "ID Produk" },
+    { key: "id", header: "ID Produk", render: (item: ProductWithCategory) => shortId(item.id) },
     { key: "name", header: "Produk" },
-    { key: "category", header: "Kategori" },
-    { 
-      key: "price", 
-      header: "Harga",
-      render: (item: any) => `Rp ${item.price.toLocaleString('id-ID')}`
-    },
+    { key: "categoryName", header: "Kategori", render: (item: ProductWithCategory) => item.product_categories?.name ?? "-" },
+    { key: "price", header: "Harga", render: (item: ProductWithCategory) => `Rp ${Number(item.price).toLocaleString('id-ID')}` },
     { key: "stock", header: "Stok" },
-    { 
-      key: "status", 
+    { key: "min_stock", header: "Stok Minimum", render: (item: ProductWithCategory) => item.min_stock ?? "-" },
+    {
+      key: "status",
       header: "Status",
-      render: (item: any) => (
-        <Badge variant={item.status === "Low Stock" ? "warning" : "success"}>
+      render: (item: ProductWithCategory) => (
+        <Badge variant={item.status === "Available" ? "success" : item.status === "Low Stock" ? "warning" : "critical"}>
           {item.status}
         </Badge>
       )
@@ -68,11 +143,17 @@ export default function ProductsPage() {
     {
       key: "actions",
       header: "Aksi",
-      render: () => (
-        <Button variant="ghost" size="sm" className="text-primary font-semibold">Edit</Button>
+      render: (item: ProductWithCategory) => (
+        <Button variant="ghost" size="sm" className="text-primary font-semibold" onClick={() => handleEditProduct(item)}>
+          Edit
+        </Button>
       )
     }
   ];
+
+  const filteredCategories = categories.filter((c) =>
+    c.name.toLowerCase().includes(categorySearch.toLowerCase())
+  );
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -96,11 +177,15 @@ export default function ProductsPage() {
 
       {feedback && <p className="text-sm text-success" role="status">{feedback}</p>}
 
-      <DataTable data={products} columns={columns} />
+      {loading ? (
+        <p className="text-muted text-sm">Memuat produk...</p>
+      ) : (
+        <DataTable data={products} columns={columns} />
+      )}
 
-      <Modal 
-        isOpen={isAddModalOpen} 
-        onClose={() => setIsAddModalOpen(false)} 
+      <Modal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
         title="Tambah Produk Baru"
         footer={
           <>
@@ -112,20 +197,20 @@ export default function ProductsPage() {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Nama Produk</label>
-            <Input 
-              placeholder="e.g. Kopi Vanilla" 
+            <Input
+              placeholder="e.g. Kopi Vanilla"
               value={newProduct.name}
-              onChange={e => setNewProduct({...newProduct, name: e.target.value})}
+              onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
             />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Harga</label>
-              <Input 
-                type="number" 
+              <Input
+                type="number"
                 placeholder="20000"
                 value={newProduct.price}
-                onChange={e => setNewProduct({...newProduct, price: e.target.value})} 
+                onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
               />
             </div>
             <div className="min-w-0">
@@ -138,54 +223,51 @@ export default function ProductsPage() {
               />
               <div className="mt-2 max-h-48 overflow-y-auto rounded-md border border-gray-200" role="listbox" aria-label="Daftar kategori">
                 <div className="flex flex-col">
-                  {productCategories
-                    .filter(category => category.toLowerCase().includes(categorySearch.toLowerCase()))
-                    .map(category => (
-                      <button
-                        key={category}
-                        type="button"
-                        role="option"
-                        aria-selected={newProduct.category === category}
-                        onClick={() => setNewProduct({...newProduct, category})}
-                        className={`w-full px-4 py-3 text-sm font-medium text-left transition-colors border-b last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${newProduct.category === category ? "bg-primary/10 text-primary border-primary" : "hover:bg-gray-50 border-gray-200"}`}
-                      >
-                        {category}
-                      </button>
-                    ))}
+                  {filteredCategories.map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      role="option"
+                      aria-selected={newProduct.categoryId === category.id}
+                      onClick={() => setNewProduct({ ...newProduct, categoryId: category.id })}
+                      className={`w-full px-4 py-3 text-sm font-medium text-left transition-colors border-b last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${newProduct.categoryId === category.id ? "bg-primary/10 text-primary border-primary" : "hover:bg-gray-50 border-gray-200"}`}
+                    >
+                      {category.name}
+                    </button>
+                  ))}
                 </div>
-                {!productCategories.some(category => category.toLowerCase().includes(categorySearch.toLowerCase())) && (
+                {filteredCategories.length === 0 && (
                   <p className="px-2 py-3 text-center text-sm text-muted">Kategori tidak ditemukan.</p>
                 )}
               </div>
-              <p className="mt-1 text-xs text-muted">Terpilih: {newProduct.category}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Stok Saat Ini</label>
-              <Input 
-                type="number" 
+              <Input
+                type="number"
                 placeholder="50"
                 value={newProduct.stock}
-                onChange={e => setNewProduct({...newProduct, stock: e.target.value})} 
+                onChange={e => setNewProduct({ ...newProduct, stock: e.target.value })}
               />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Stok Minimum</label>
-              <Input 
-                type="number" 
+              <Input
+                type="number"
                 placeholder="10"
                 value={newProduct.minStock}
-                onChange={e => setNewProduct({...newProduct, minStock: e.target.value})} 
+                onChange={e => setNewProduct({ ...newProduct, minStock: e.target.value })}
               />
             </div>
           </div>
         </div>
       </Modal>
 
-      <Modal 
-        isOpen={isQRModalOpen} 
-        onClose={() => setIsQRModalOpen(false)} 
+      <Modal
+        isOpen={isQRModalOpen}
+        onClose={() => setIsQRModalOpen(false)}
         title="Produk Berhasil Ditambahkan"
         footer={
           <Button onClick={() => setIsQRModalOpen(false)}>Tutup</Button>
@@ -193,26 +275,29 @@ export default function ProductsPage() {
       >
         <div className="flex flex-col items-center gap-6">
           <div className="bg-white p-4 rounded-lg border border-gray-200">
-              {savedProduct && (
-    <QRCodeCanvas
-      value={JSON.stringify({
-        id: savedProduct.id,
-        name: savedProduct.name,
-      })}
-      size={200}
-    />
-  )}
-            
+            {savedProduct && (
+              <QRCodeCanvas
+                value={JSON.stringify({
+                  id: savedProduct.id,
+                  name: savedProduct.name,
+                })}
+                size={200}
+              />
+            )}
           </div>
           <div className="w-full space-y-2 text-center">
             <h3 className="font-semibold text-lg">{savedProduct?.name}</h3>
             <p className="text-sm text-muted">ID: {savedProduct?.id}</p>
-            <p className="text-sm text-muted">Kategori: {savedProduct?.category}</p>
-            <p className="text-sm font-medium">Harga: Rp {savedProduct?.price.toLocaleString('id-ID')}</p>
+            <p className="text-sm text-muted">Kategori: {savedProduct?.product_categories?.name}</p>
+            <p className="text-sm font-medium">Harga: Rp {Number(savedProduct?.price ?? 0).toLocaleString('id-ID')}</p>
             <p className="text-sm text-muted">Stok: {savedProduct?.stock} unit</p>
           </div>
         </div>
       </Modal>
     </div>
   )
+}
+
+function shortId(id: string) {
+  return id.slice(0, 8).toUpperCase();
 }
